@@ -1,0 +1,7 @@
+function urls=findmyfiles(url)
+
+
+list = dir(char(url));
+whos(ur)
+isnotdir = [list.isdir]==0;
+urs = {list(isnotdir).names};

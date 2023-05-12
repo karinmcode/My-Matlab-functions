@@ -1,0 +1,111 @@
+function [pval, isOverlapping, sentence] = myCheckOverlap(varargin)
+% Check if two clouds of points are overlapping
+% Inputs:
+% - Two sets of points in the form of either
+%   - Two 1D arrays [x1, y1, x2, y2]
+%   - Two n-by-2 arrays [x1, y1], [x2, y2]
+% - Significance level (default: 0.05)
+% Output:
+% - pval: p-value of the two-sample Kolmogorov-Smirnov test
+% - isOverlapping: true if the two clouds of points are overlapping, false otherwise
+% - sentence: sentence summarizing the statistical result
+
+nargin = numel(varargin);
+if nargin < 2
+    error('At least two input arguments are required')
+end
+
+alpha = 0.05;
+
+if nargin >= 3 && isscalar(varargin{3})
+    alpha = varargin{3};
+    nargin = nargin - 1;
+end
+
+% Convert input arguments to n-by-2 arrays if necessary
+if nargin == 2
+    if size(varargin{1}, 2) == 2 && size(varargin{2}, 2) == 2
+        x1 = varargin{1}(:, 1);
+        y1 = varargin{1}(:, 2);
+        x2 = varargin{2}(:, 1);
+        y2 = varargin{2}(:, 2);
+    else
+        error('The input arguments must be n-by-2 arrays if only two arguments are provided')
+    end
+elseif nargin == 4
+    x1 = varargin{1}(:);
+    y1 = varargin{2}(:);
+    x2 = varargin{3}(:);
+    y2 = varargin{4}(:);
+else
+    error('Invalid number of input arguments')
+end
+
+% Combine the two clouds of points
+x = [x1(:); x2(:)];
+y = [y1(:); y2(:)];
+
+% Compute the 2D kernel density estimates
+[f1, xi1, yi1] = myKsdensity([x1(:) y1(:)]);
+[f2, xi2, yi2] = myKsdensity([x2(:) y2(:)]);
+[f, xi, yi] = myKsdensity([x y]);
+
+% Compute the two-sample Kolmogorov-Smirnov test statistic
+d1 = max(abs(cdf2d(f1,xi1,yi1) - cdf2d(f,xi,yi)), ...
+         abs(cdf2d(f2,xi2,yi2) - cdf2d(f,xi,yi)));
+d2 = max(abs(cdf2d(f2,xi2,yi2) - cdf2d(f,xi,yi)), ...
+         abs(cdf2d(f1,xi1,yi1) - cdf2d(f,xi,yi)));
+d = max(d1, d2);
+n1 = numel(x1);
+n2 = numel(x2);
+m = n1*n2/(n1+n2);
+s = sqrt(m/(n1+n2));
+pval = 1 - ksdensity([d(:), zeros(size(d(:)))], [0:s:max(d), zeros(size(0:s:max(d)))], 'function', 'cdf');
+
+isOverlapping = (pval > alpha);
+
+
+% Generate sentence summarizing the statistical result
+if isOverlapping
+    sentence = sprintf('The two clouds of points are overlapping based on the two-sample Kolmogorov-Smirnov test (p = %.3g)', pval);
+else
+    sentence = sprintf('The two clouds of points are not overlapping based on the two-sample Kolmogorov-Smirnov test (p = %.3g)', pval);
+end
+
+
+end
+
+function [F,xi,yi] = myKsdensity(data)
+% Compute the 2D kernel density estimate using Matlab's built-in ksdensity function
+% with a Gaussian kernel and a bandwidth estimated using Scott's rule
+bw = 1.06 * std(data(:)) * numel(data(:)) ^ (-1/5);%bandwidth bw based on the Silverman rule, which is a heuristic for choosing the optimal bandwidth for kernel density estimation. 
+
+[F,xi,yi] = ksdensity(data, 'Kernel', 'normal', 'Bandwidth', bw, 'BoundaryCorrection', 'reflection');
+end
+
+
+function cdf = cdf2d(f, xi, yi)
+% Compute the 2D cumulative distribution function from the 2D kernel density estimate
+% Inputs:
+% - f: a 2D array representing the kernel density estimate
+% - xi: a 1D array of x-coordinates corresponding to the columns of f
+% - yi: a 1D array of y-coordinates corresponding to the rows of f
+% Outputs:
+% - cdf: a 2D array representing the cumulative distribution function of f
+%
+% Note: xi and yi should have the same number of elements as the dimensions
+% of f, i.e., numel(xi) = size(f, 2) and numel(yi) = size(f, 1)
+
+dx = mean(diff(xi));
+dy = mean(diff(yi));
+
+% Calculate the cumulative sum separately for each dimension
+cdf_x = cumsum(f, 2) * dx;
+cdf_y = cumsum(f, 1) * dy;
+
+% Combine the cumulative sums to get the 2D cumulative distribution function
+cdf = cdf_x + cdf_y - f;
+end
+
+
+
