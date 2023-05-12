@@ -1,0 +1,159 @@
+function [accuracy, confusion, fig, acc_shuffle] = my_svm_classification(X, Y, pHoldOut,varargin)
+% Inputs:
+%   X: a matrix of samples by features
+%   Y: a vector of categories or a cell array of strings
+%   holdout_prop: the proportion of data to hold out for testing
+% Outputs:
+%   acc: classification accuracy on test set
+%   confMat: confusion matrix
+%   fig: handle to figure
+
+
+params = parseInputs(varargin{:});
+
+dbstop if error;
+% check if Y is a cell array of strings
+if iscell(Y)
+    categories = unique(Y);
+    Y = grp2idx(Y);
+else
+    categories = unique(Y)';
+end
+
+% normalize data
+%X = normalize(X);
+%X = X./max(X,1);
+
+
+% split data into training and testing sets
+cv = cvpartition(Y,'HoldOut' ,pHoldOut);
+Xtrain = X(cv.training,:);
+Ytrain = Y(cv.training);
+Xtest = X(cv.test,:);
+Ytest = Y(cv.test);
+
+% Set up SVM options
+paramsfig.KernelScale = 10;
+paramsfig.KernelFunction = 'gaussian';
+svmOptions = templateSVM('KernelFunction',paramsfig.KernelFunction, 'KernelScale',paramsfig.KernelScale);
+
+% train SVM using fitcecoc
+SVMModel = fitcecoc(Xtrain, Ytrain,'Learners',svmOptions);
+
+% predict on training and testing data
+Ytrain_pred = predict(SVMModel, Xtrain);
+Ytest_pred = predict(SVMModel, Xtest);
+
+% calculate accuracy and confusion matrix
+accuracy.train = mean(Ytrain_pred == Ytrain);
+accuracy.test = mean(Ytest_pred == Ytest);
+confusion.train = confusionmat(Ytrain, Ytrain_pred);
+confusion.test = confusionmat(Ytest, Ytest_pred);
+
+% compute chance level accuracy and distribution
+chanceLevel = 1 / length(categories);
+niter = 10;
+chanceAcc = zeros(niter, 1);
+for i = 1:niter
+    % shuffle labels
+    Yshuffled = Y(randperm(length(Y)));
+    % split into training and testing sets
+    Ytrain_shuffled = Yshuffled(cv.training);
+    Ytest_shuffled = Yshuffled(cv.test);
+    % train SVM using fitcecoc
+    SVMModel_shuffled = fitcecoc(X(cv.training,:), Ytrain_shuffled,'Learners',svmOptions);
+    % predict on testing data
+    Ytest_pred_shuffled = predict(SVMModel_shuffled, X(cv.test,:));
+    % calculate accuracy
+    chanceAcc(i) = mean(Ytest_pred_shuffled == Ytest_shuffled);
+end
+
+%% Plot the results
+fig = findobj('Type', 'Figure', 'Tag', 'svm_classification_figure');
+if isempty(fig)
+    fig = figure('Color', 'w', 'Tag', 'svm_classification_figure');
+else
+    figure(fig);
+end
+fig.Position =  [2857 446 560 889];
+
+clf;
+%% plot confusion matrix and accuracy comparison
+
+ax1=subplot(2,1,1,'replace');
+C= confusion.test./sum(confusion.test,2);
+imagesc(C);
+axis square;
+
+xticks(1:length(categories));
+yticks(1:length(categories));
+if iscell(categories)
+    ticklabels = categories;
+else
+    ticklabels = strtrim(cellstr(num2str(categories')));
+end
+set(gca, 'XTickLabel', ticklabels, 'YTickLabel', ticklabels,'XAxisLocation','top','TickDir','both');
+title({params.SVMchoice,'Confusion matrix' , sprintf('(accuracy = %.2f)' ,accuracy.test )});
+
+% Write the accuracy text along the diagonal
+textStrings = num2str(round(100*diag(C)./sum(C,2)),'%d%%\n');
+textStrings = strtrim(cellstr(textStrings));
+[x,y] = meshgrid(1:size(C,1),1:size(C,2));
+hStrings = text(diag(x),diag(y),textStrings(:),'HorizontalAlignment','center');
+xlabel('Predicted');
+ylabel('True');
+
+
+colorbar; caxis([0 1]);
+colormap jet;
+
+%% plot accuracy versus chance level
+ax2=subplot(2,1,2,'replace');
+ba=bar([accuracy.train, accuracy.test], 'FaceColor', 'k');
+hold on;
+plot([0 3],[chanceLevel chanceLevel],':k')
+ [lower_bound, upper_bound] = my_compute_confidence_interval(chanceAcc, 0.90);
+patch([0.5 2.5 2.5 0.5], [upper_bound upper_bound lower_bound lower_bound], 'k', 'FaceAlpha', 0.2, 'EdgeColor', 'none');
+ylim([0 1]);
+ylabel('Accuracy');
+xticklabels({'Training', sprintf('Test %g%%',pHoldOut*100)});
+acc_shuffle = mean(chanceAcc);
+ntrials = size(X,1);
+nce = size(X,2);
+[G,pG] = findgroups(Y);
+nG=groupcounts(G);
+M=groupsummary(X,Y,"mean");
+MM=mean(M,2);
+nrep = replace(num2str(nG'),'  ',' ');
+xlabel(sprintf('Chance level: %.2f\nn test trials=%g\nnce=%g\nnrep=%s', acc_shuffle,ntrials,nce,nrep), 'Color', [1 1 1]*0.5,'FontAngle','italic','FontSize',10);
+set(gca,'Box','off');
+axis square;
+% compute t-test and plot significance star if necessary
+[h, pval, ~, stats] = ttest(chanceAcc, accuracy.test);
+
+if h
+    stars = repmat('*', 1, sum(pval < [0.05 0.01 0.001]));
+    text(2, accuracy.test+0.1, stars, 'FontSize', 18, 'HorizontalAlignment', 'center');
+end
+title({'Statistical comparison' 'with chance level accuracy'},'HorizontalAlignment','center');
+align([ax1 ax2],"Left","None")
+align([ax1 ax2],'none',"Distribute")
+ax1.Position(2)=0.52;
+end
+
+
+function params = parseInputs(varargin)
+
+
+p = inputParser();
+p.KeepUnmatched=1;
+
+parse(p,varargin{:});
+
+params = p.Unmatched;
+
+if ~isfield(params,'SVMchoice')
+params.SVMchoice = 'SVM';
+end
+
+end
